@@ -328,7 +328,7 @@ mod tests {
                 Wall,
             }
         );
-        
+
         derive_grid_cell(stream);
     }
 
@@ -368,7 +368,7 @@ mod tests {
                 Stairs(char),
             }
         );
-    
+
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
@@ -381,7 +381,7 @@ mod tests {
                 Empty,
             }
         );
-        
+
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
