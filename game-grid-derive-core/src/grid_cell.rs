@@ -2,9 +2,9 @@ use proc_macro2::{Ident, TokenStream, TokenTree};
 use proc_macro_error::abort;
 use quote::ToTokens;
 use syn::{
-    parse2, parse_quote, parse_str, punctuated::Punctuated, spanned::Spanned, token::Or, Arm,
-    Attribute, Expr, ExprLit, ExprRange, ImplItemMethod, ItemEnum, ItemImpl, Lit, LitChar, Pat,
-    PatLit, PatOr,
+    parse2, parse_quote, parse_str, punctuated::Punctuated, spanned::Spanned,
+    token::Or, Arm, Attribute, Expr, ExprLit, ExprRange, ImplItemMethod,
+    ItemEnum, ItemImpl, Lit, LitChar, Pat, PatLit, PatOr,
 };
 
 enum AttributeArg {
@@ -16,14 +16,21 @@ enum AttributeArg {
 struct VariantAttribute {
     argument: AttributeArg,
     identifier: Ident,
+    fields: Vec<Ident>,
+}
+
+impl Spanned for VariantAttribute {
+    fn span(&self) -> proc_macro2::Span {
+        self.identifier.span()
+    }
 }
 
 fn parse_or_pattern(cell_attribute: &Attribute) -> Result<Vec<LitChar>, ()> {
     let tokens = cell_attribute.parse_args::<TokenStream>().unwrap();
-
+    
     let mut iter = tokens.into_iter();
     let mut alternatives: Vec<LitChar> = Vec::new();
-
+    
     // Parse a list of char literals separated by '|' delimiter.
     while let Some(token) = iter.next() {
         match token {
@@ -55,7 +62,7 @@ fn parse_or_pattern(cell_attribute: &Attribute) -> Result<Vec<LitChar>, ()> {
             ),
         };
     }
-
+    
     Ok(alternatives)
 }
 
@@ -82,12 +89,8 @@ fn construct_or_pattern(alternatives: &Vec<LitChar>) -> PatOr {
             })),
         }));
     }
-
-    PatOr {
-        cases,
-        attrs: vec![],
-        leading_vert: None,
-    }
+    
+    PatOr { cases, attrs: vec![], leading_vert: None }
 }
 
 fn construct_try_from_match_arms(
@@ -98,21 +101,37 @@ fn construct_try_from_match_arms(
 
     for variant in variants {
         let ident = &variant.identifier;
+
         match &variant.argument {
             AttributeArg::Literal(char_literal) => {
-                arms.push(parse_quote!( #char_literal => Ok(#enum_identifier::#ident),));
+                if variant.fields.is_empty() {
+                    // Unit variant
+                    arms.push(parse_quote!( #char_literal => Ok(#enum_identifier::#ident), ));
+                } else {
+                    // Tuple variant with capture
+                    arms.push(parse_quote!( #char_literal => Ok(#enum_identifier::#ident(#char_literal)), ));
+                }
             }
             AttributeArg::Range(range) => {
-                arms.push(parse_quote!(#range => Ok(#enum_identifier::#ident(value)),))
+                if variant.fields.is_empty() {
+                    arms.push(parse_quote!( #range => Ok(#enum_identifier::#ident), ));
+                } else {
+                    arms.push(parse_quote!( #range => Ok(#enum_identifier::#ident(value)), ));
+                }
             }
             AttributeArg::Or(alternatives) => {
-                let or_pattern = construct_or_pattern(alternatives);
-                arms.push(parse_quote!( #or_pattern => Ok(#enum_identifier::#ident),));
-            }
+                if variant.fields.is_empty() {
+                    let or_pattern = construct_or_pattern(alternatives);
+                    arms.push(parse_quote!( #or_pattern => Ok(#enum_identifier::#ident), ));
+                } else {
+                    let or_pattern = construct_or_pattern(alternatives);
+                    arms.push(parse_quote!( #or_pattern => Ok(#enum_identifier::#ident(value)), ));
+                }
+            }            
         }
     }
 
-    arms.push(parse_quote!( _ => Err(ParseCellError(value)),));
+    arms.push(parse_quote!( _ => Err(ParseCellError(value)), ));
     arms
 }
 
@@ -128,14 +147,14 @@ fn generate_try_from_char_impl(
             }
         }
     );
-
+    
     let implementation_base: ItemImpl = parse_quote!(
         impl TryFrom<char> for #enum_identifier {
             type Error = ParseCellError;
             #try_from_char_fn
         }
     );
-
+    
     implementation_base
 }
 
@@ -147,16 +166,30 @@ fn construct_char_from_cell_match_arms(
 
     for variant in variants {
         let ident = &variant.identifier;
+
         match &variant.argument {
             AttributeArg::Literal(char_literal) => {
-                arms.push(parse_quote!(#enum_identifier::#ident => #char_literal,));
+                if variant.fields.is_empty() {
+                    // Unit variant
+                    arms.push(parse_quote!( #enum_identifier::#ident => #char_literal, ));
+                } else {
+                    // Tuple variant with capture
+                    arms.push(parse_quote!( #enum_identifier::#ident(c) => #char_literal, ));
+                }
             }
             AttributeArg::Range(_) => {
-                arms.push(parse_quote!(#enum_identifier::#ident(character) => character,));
+                arms.push(parse_quote!( #enum_identifier::#ident(character) => character, ));
             }
             AttributeArg::Or(alternatives) => {
-                let char_literal = alternatives.first().unwrap();
-                arms.push(parse_quote!(#enum_identifier::#ident  => #char_literal,))
+                if variant.fields.is_empty() {
+                    // Unit variant
+                    let char_literal = alternatives.first().unwrap();
+                    arms.push(parse_quote!( #enum_identifier::#ident => #char_literal, ));
+                } else {
+                    // Tuple variant with capture
+                    let char_literal = alternatives.first().unwrap();
+                    arms.push(parse_quote!( #enum_identifier::#ident(c) => #char_literal, ));
+                }
             }
         }
     }
@@ -164,9 +197,13 @@ fn construct_char_from_cell_match_arms(
     arms
 }
 
-fn generate_char_from_cell(enum_identifier: &Ident, variants: &Vec<VariantAttribute>) -> ItemImpl {
-    let match_arms: Vec<Arm> = construct_char_from_cell_match_arms(enum_identifier, variants);
-
+fn generate_char_from_cell(
+    enum_identifier: &Ident,
+    variants: &Vec<VariantAttribute>,
+) -> ItemImpl {
+    let match_arms: Vec<Arm> =
+    construct_char_from_cell_match_arms(enum_identifier, variants);
+    
     let implementation: ItemImpl = parse_quote!(
         impl From<#enum_identifier> for char {
             fn from(cell: #enum_identifier) -> char {
@@ -176,7 +213,7 @@ fn generate_char_from_cell(enum_identifier: &Ident, variants: &Vec<VariantAttrib
             }
         }
     );
-
+    
     implementation
 }
 
@@ -185,44 +222,69 @@ pub fn derive_grid_cell(input: TokenStream) -> TokenStream {
         Ok(syntax_tree) => syntax_tree,
         Err(error) => return error.to_compile_error(),
     };
-
+    
     let enum_identifier = input_enum.ident;
-
+    
     let mut variants: Vec<VariantAttribute> = Vec::new();
-
-    for variant in input_enum.variants {
+    
+    for variant in input_enum.variants {        
         let variant_cell_attribute = variant
             .attrs
             .iter()
             .find(|attr| attr.path.segments.first().unwrap().ident == "cell");
-
+        
         if let Some(cell_attribute) = variant_cell_attribute {
             if let Ok(argument) = extract_argument(cell_attribute) {
+                let fields = match &variant.fields {
+                    syn::Fields::Unit => Vec::new(), 
+                    syn::Fields::Unnamed(unnamed_fields) if unnamed_fields.unnamed.len() == 1 => {
+                        vec![Ident::new("value", unnamed_fields.unnamed.first().unwrap().ty.span())]
+                    },
+                    _ => {
+                        abort!(
+                            variant.span(), 
+                            "Only unit or single-field tuple variants are supported"
+                        );
+                    }
+                };
+                                
                 variants.push(VariantAttribute {
                     argument,
                     identifier: variant.ident,
+                    fields,
                 });
+                
             } else {
                 abort!(
                     variant_cell_attribute.span(),
                     format!(
-                        "'cell' attribute arguments for variant '{}' is invalid. \
-                        The argument must be a char literal (ex: 'a') or a range of chars (ex: 'a'..'z').",
+                        "'cell' attribute arguments for variant '{}' is invalid. The \
+             argument must be a char literal (ex: 'a') or a range of chars \
+             (ex: 'a'..'z').",
                         variant.ident
                     )
                 );
             }
         } else {
-            abort!(input.span(), format!("Missing 'cell' attribut for enum variant '{}'. \
-            All variants must have a 'cell' attribute to derive 'GridCell', consider adding a #[cell(..)] attribute.", variant.ident));
+            abort!(
+                input.span(),
+                format!(
+                    "Missing 'cell' attribute for enum variant '{}'. All variants must \
+           have a 'cell' attribute to derive 'GridCell', consider adding a \
+           #[cell(..)] attribute.",
+                    variant.ident
+                )
+            );
         }
     }
-
-    let try_form_char_impl = generate_try_from_char_impl(&enum_identifier, &variants);
-    let char_form_cell_impl = generate_char_from_cell(&enum_identifier, &variants);
-
+    
+    let try_form_char_impl =
+    generate_try_from_char_impl(&enum_identifier, &variants);
+    let char_form_cell_impl =
+    generate_char_from_cell(&enum_identifier, &variants);
+    
     let mut tokens = try_form_char_impl.to_token_stream();
-    tokens.extend(char_form_cell_impl.to_token_stream().into_iter());
+    tokens.extend(char_form_cell_impl.to_token_stream());
     tokens
 }
 
@@ -230,7 +292,7 @@ pub fn derive_grid_cell(input: TokenStream) -> TokenStream {
 mod tests {
     use super::*;
     use quote::quote;
-
+    
     #[test]
     #[should_panic]
     fn test_missing_cell_attribute() {
@@ -239,10 +301,10 @@ mod tests {
                 Wall,
             }
         );
-
+        
         derive_grid_cell(stream);
     }
-
+    
     #[test]
     #[should_panic]
     fn test_missing_mallformed_attribute() {
@@ -252,10 +314,10 @@ mod tests {
                 Wall,
             }
         );
-
+        
         derive_grid_cell(stream);
     }
-
+    
     #[test]
     #[should_panic]
     fn invalid_cell_attribute_arg() {
@@ -265,10 +327,10 @@ mod tests {
                 Wall,
             }
         );
-
+        
         derive_grid_cell(stream);
     }
-
+    
     #[test]
     fn test_basic_passing_code() {
         let stream = quote!(
@@ -279,11 +341,11 @@ mod tests {
                 Empty,
             }
         );
-
+        
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
-
+    
     #[test]
     fn test_or_args() {
         let stream = quote!(
@@ -292,11 +354,24 @@ mod tests {
                 Empty,
             }
         );
-
+        
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
 
+    #[test]
+    fn test_or_args_with_capture() {
+        let stream = quote!(
+            enum A {
+                #[cell('>'|'<')]
+                Stairs(char),
+            }
+        );
+        
+        let output_stream = derive_grid_cell(stream);
+        assert!(!output_stream.is_empty());
+    }
+    
     #[test]
     fn test_rang_args() {
         let stream = quote!(
@@ -305,11 +380,11 @@ mod tests {
                 Empty,
             }
         );
-
+        
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
-
+    
     // #[test]
     // #[should_panic]
     // fn test_wrong_synthax() {
@@ -323,7 +398,7 @@ mod tests {
     //     let output_stream = derive_grid_cell(stream);
     //     assert!(!output_stream.is_empty());
     // }
-
+    
     #[test]
     #[should_panic]
     fn test_wrong_synthax2() {
@@ -333,7 +408,7 @@ mod tests {
                 Empty,
             }
         );
-
+        
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
