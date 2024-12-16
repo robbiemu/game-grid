@@ -27,10 +27,10 @@ impl Spanned for VariantAttribute {
 
 fn parse_or_pattern(cell_attribute: &Attribute) -> Result<Vec<LitChar>, ()> {
     let tokens = cell_attribute.parse_args::<TokenStream>().unwrap();
-    
+
     let mut iter = tokens.into_iter();
     let mut alternatives: Vec<LitChar> = Vec::new();
-    
+
     // Parse a list of char literals separated by '|' delimiter.
     while let Some(token) = iter.next() {
         match token {
@@ -62,7 +62,7 @@ fn parse_or_pattern(cell_attribute: &Attribute) -> Result<Vec<LitChar>, ()> {
             ),
         };
     }
-    
+
     Ok(alternatives)
 }
 
@@ -89,7 +89,7 @@ fn construct_or_pattern(alternatives: &Vec<LitChar>) -> PatOr {
             })),
         }));
     }
-    
+
     PatOr { cases, attrs: vec![], leading_vert: None }
 }
 
@@ -147,14 +147,14 @@ fn generate_try_from_char_impl(
             }
         }
     );
-    
+
     let implementation_base: ItemImpl = parse_quote!(
         impl TryFrom<char> for #enum_identifier {
             type Error = ParseCellError;
             #try_from_char_fn
         }
     );
-    
+
     implementation_base
 }
 
@@ -203,7 +203,7 @@ fn generate_char_from_cell(
 ) -> ItemImpl {
     let match_arms: Vec<Arm> =
     construct_char_from_cell_match_arms(enum_identifier, variants);
-    
+
     let implementation: ItemImpl = parse_quote!(
         impl From<#enum_identifier> for char {
             fn from(cell: #enum_identifier) -> char {
@@ -213,7 +213,7 @@ fn generate_char_from_cell(
             }
         }
     );
-    
+
     implementation
 }
 
@@ -222,17 +222,17 @@ pub fn derive_grid_cell(input: TokenStream) -> TokenStream {
         Ok(syntax_tree) => syntax_tree,
         Err(error) => return error.to_compile_error(),
     };
-    
+
     let enum_identifier = input_enum.ident;
-    
+
     let mut variants: Vec<VariantAttribute> = Vec::new();
-    
+
     for variant in input_enum.variants {        
         let variant_cell_attribute = variant
             .attrs
             .iter()
             .find(|attr| attr.path.segments.first().unwrap().ident == "cell");
-        
+
         if let Some(cell_attribute) = variant_cell_attribute {
             if let Ok(argument) = extract_argument(cell_attribute) {
                 let fields = match &variant.fields {
@@ -247,13 +247,13 @@ pub fn derive_grid_cell(input: TokenStream) -> TokenStream {
                         );
                     }
                 };
-                                
+
                 variants.push(VariantAttribute {
                     argument,
                     identifier: variant.ident,
                     fields,
                 });
-                
+
             } else {
                 abort!(
                     variant_cell_attribute.span(),
@@ -277,7 +277,7 @@ pub fn derive_grid_cell(input: TokenStream) -> TokenStream {
             );
         }
     }
-    
+
     let try_form_char_impl =
     generate_try_from_char_impl(&enum_identifier, &variants);
     let char_form_cell_impl =
@@ -285,6 +285,7 @@ pub fn derive_grid_cell(input: TokenStream) -> TokenStream {
     
     let mut tokens = try_form_char_impl.to_token_stream();
     tokens.extend(char_form_cell_impl.to_token_stream());
+
     tokens
 }
 
@@ -292,7 +293,7 @@ pub fn derive_grid_cell(input: TokenStream) -> TokenStream {
 mod tests {
     use super::*;
     use quote::quote;
-    
+
     #[test]
     #[should_panic]
     fn test_missing_cell_attribute() {
@@ -301,10 +302,10 @@ mod tests {
                 Wall,
             }
         );
-        
+
         derive_grid_cell(stream);
     }
-    
+
     #[test]
     #[should_panic]
     fn test_missing_mallformed_attribute() {
@@ -314,10 +315,10 @@ mod tests {
                 Wall,
             }
         );
-        
+
         derive_grid_cell(stream);
     }
-    
+
     #[test]
     #[should_panic]
     fn invalid_cell_attribute_arg() {
@@ -330,7 +331,7 @@ mod tests {
         
         derive_grid_cell(stream);
     }
-    
+
     #[test]
     fn test_basic_passing_code() {
         let stream = quote!(
@@ -341,11 +342,11 @@ mod tests {
                 Empty,
             }
         );
-        
+
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
-    
+
     #[test]
     fn test_or_args() {
         let stream = quote!(
@@ -354,7 +355,7 @@ mod tests {
                 Empty,
             }
         );
-        
+
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
@@ -367,11 +368,11 @@ mod tests {
                 Stairs(char),
             }
         );
-        
+    
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
-    
+
     #[test]
     fn test_rang_args() {
         let stream = quote!(
@@ -384,7 +385,7 @@ mod tests {
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
-    
+
     // #[test]
     // #[should_panic]
     // fn test_wrong_synthax() {
@@ -398,7 +399,7 @@ mod tests {
     //     let output_stream = derive_grid_cell(stream);
     //     assert!(!output_stream.is_empty());
     // }
-    
+
     #[test]
     #[should_panic]
     fn test_wrong_synthax2() {
@@ -408,7 +409,7 @@ mod tests {
                 Empty,
             }
         );
-        
+
         let output_stream = derive_grid_cell(stream);
         assert!(!output_stream.is_empty());
     }
